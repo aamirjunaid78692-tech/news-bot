@@ -1,0 +1,22 @@
+name: news-bot
+on:
+  schedule:
+    - cron: "30 11 * * 1-5"
+    - cron: "15 13 * * 1-5"
+    - cron: "30 17 * * 1-5"
+  workflow_dispatch: {}
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+      ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+      ALPACA_PAPER: "True"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python bot.py --today
