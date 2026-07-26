@@ -61,13 +61,26 @@ POLL_SECONDS = 20               # scheduler tick
 # ----------------------------------------------------------------------------
 # Strategy mode
 # ----------------------------------------------------------------------------
-# "directional"      -> take BIAS_SIDE only (carry direction into the print)
-# "bracket_straddle" -> take BIAS_SIDE but risk-defined with a bracket (recommended)
-STRATEGY_MODE = "bracket_straddle"
+# "breakout_straddle" -> the MARKET picks the side. The bot records a baseline
+#                        price just before the release, then watches live: if
+#                        price breaks UP past +BREAKOUT_TRIGGER_PCT it goes long,
+#                        if it breaks DOWN it goes short. Whichever way the news
+#                        pushes gold, the bot follows. (Software breakout, so it
+#                        works pre-market too, where Alpaca blocks stop orders.)
+# "directional"       -> ignore the price move, always take BIAS_SIDE.
+# "bracket_straddle"  -> take BIAS_SIDE, risk-defined with a bracket.
+STRATEGY_MODE = "breakout_straddle"
 
-# Net late-July-2026 tape is dovish -> bullish gold -> default long.
+# Only used by "directional" / "bracket_straddle" modes.
 # "buy" = long GLD, "sell" = short GLD.
 BIAS_SIDE = "buy"
+
+# ----------------------------------------------------------------------------
+# Breakout-straddle settings
+# ----------------------------------------------------------------------------
+BREAKOUT_TRIGGER_PCT = 0.003    # price must move this far from baseline to fire (0.3%)
+BREAKOUT_WATCH_MINUTES = 10     # after release, watch this long for a break, else no trade
+BREAKOUT_POLL_SECONDS = 5       # how often to check the price while watching
 
 # ----------------------------------------------------------------------------
 # Sizing & risk

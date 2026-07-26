@@ -107,6 +107,41 @@ class Broker:
         order = self.trading.submit_order(req)
         return {"id": str(order.id), "entry": px, "limit": limit, "qty": qty}
 
+    def simple_entry(self, symbol: str, side: str, qty: int, regular_hours: bool) -> dict:
+        """
+        Plain entry with NO native bracket (breakout mode manages its own exit
+        in software). Market order in regular hours; marketable-limit in
+        extended hours (pre-market), where market orders are not allowed.
+        `side` == "buy" opens long, "sell" opens short.
+        """
+        order_side = OrderSide.BUY if side == "buy" else OrderSide.SELL
+        if regular_hours:
+            req = MarketOrderRequest(
+                symbol=symbol, qty=qty, side=order_side,
+                time_in_force=TimeInForce.DAY,
+            )
+        else:
+            px = self.last_price(symbol)
+            if order_side == OrderSide.BUY:
+                limit = round(px * (1 + config.LIMIT_CROSS_PCT), 2)
+            else:
+                limit = round(px * (1 - config.LIMIT_CROSS_PCT), 2)
+            req = LimitOrderRequest(
+                symbol=symbol, qty=qty, side=order_side,
+                time_in_force=TimeInForce.DAY, limit_price=limit,
+                extended_hours=True,
+            )
+        order = self.trading.submit_order(req)
+        return {"id": str(order.id), "side": side, "qty": qty}
+
+    def avg_entry_price(self, symbol: str):
+        """Average fill price of the current open position, or None."""
+        try:
+            pos = self.trading.get_open_position(symbol)
+            return float(pos.avg_entry_price)
+        except Exception:
+            return None
+
     # --------------------------------------------------------------- managing
     def position_qty(self, symbol: str) -> int:
         try:
