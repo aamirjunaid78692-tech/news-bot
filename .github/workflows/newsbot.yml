@@ -1,22 +1,42 @@
 name: news-bot
+
+# Runs the GLD news-straddle bot on GitHub's servers (no laptop needed).
+# The bot itself waits for the exact entry time internally, so we just need
+# each run to START comfortably before the event — that absorbs any delay in
+# GitHub's scheduler.
+#
+# Times are UTC. During US Eastern SUMMER time (EDT = UTC-4):
+#   11:30 UTC = 07:30 ET  -> covers the 08:30 ET releases (NFP, CPI, Claims)
+#   13:15 UTC = 09:15 ET  -> covers the 10:00 ET releases (ISM PMI)
+#   17:30 UTC = 13:30 ET  -> covers the 14:00 ET FOMC decision
+# (In US winter/EST these shift one hour earlier in ET; adjust if needed.)
+
 on:
   schedule:
     - cron: "30 11 * * 1-5"
     - cron: "15 13 * * 1-5"
     - cron: "30 17 * * 1-5"
-  workflow_dispatch: {}
+  workflow_dispatch: {}        # lets you press "Run workflow" to test manually
+
 jobs:
   trade:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120       # idles ~1h before the event, then holds up to 30 min
     env:
       ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
       ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
       ALPACA_PAPER: "True"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -r requirements.txt
-      - run: python bot.py --today
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the bot for today's events
+        run: python bot.py --today
