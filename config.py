@@ -54,8 +54,8 @@ TRADE_ALL_HIGH_IMPACT = False
 # ----------------------------------------------------------------------------
 # Timing
 # ----------------------------------------------------------------------------
-ENTRY_LEAD_MINUTES = 2          # enter this many minutes BEFORE the release
-FLATTEN_AFTER_MINUTES = 15      # hard time-exit this many minutes AFTER release
+ENTRY_LEAD_MINUTES = 2          # arm/baseline this many minutes BEFORE the release
+FLATTEN_AFTER_MINUTES = 30      # hard time-exit N min after release (room for a 3:1 to hit)
 POLL_SECONDS = 20               # scheduler tick
 
 # ----------------------------------------------------------------------------
@@ -86,7 +86,19 @@ BREAKOUT_POLL_SECONDS = 5       # how often to check the price while watching
 # Sizing & risk
 # ----------------------------------------------------------------------------
 NOTIONAL_PER_TRADE = 1000.0     # USD notional per event (1% of a 100k paper acct)
-TAKE_PROFIT_PCT = 0.008         # +0.8% take-profit
+
+# Per-event risk-reward tiers, matched by keyword in the event title. Stop-loss
+# stays tight (0.5%); the take-profit widens for the biggest movers so you ride
+# the larger move. (take_profit_pct, stop_loss_pct) -> RR = tp / sl.
+RR_TIERS = [
+    ("FOMC",                        0.015, 0.005),   # 3 : 1  (biggest mover)
+    ("Non-Farm Employment Change",  0.015, 0.005),   # 3 : 1
+    ("CPI",                         0.015, 0.005),   # 3 : 1
+    ("PMI",                         0.010, 0.005),   # 2 : 1
+    ("Unemployment Claims",         0.010, 0.005),   # 2 : 1
+]
+# Fallback for any event not matched above:
+TAKE_PROFIT_PCT = 0.010         # +1.0% take-profit  (2 : 1 default)
 STOP_LOSS_PCT = 0.005           # -0.5% stop-loss
 
 # Marketable-limit buffer for extended-hours (pre-market) fills, since GLD

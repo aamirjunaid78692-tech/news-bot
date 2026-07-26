@@ -100,6 +100,15 @@ def _todays_events(events):
     return [e for e in events if e.when.astimezone(MARKET_TZ).date() == today_et]
 
 
+def rr_for(event: Event):
+    """Return (take_profit_pct, stop_loss_pct) for this event from its RR tier."""
+    up = event.title.upper()
+    for kw, tp, sl in getattr(config, "RR_TIERS", []):
+        if kw.upper() in up:
+            return tp, sl
+    return config.TAKE_PROFIT_PCT, config.STOP_LOSS_PCT
+
+
 # ------------------------------------------------------------- BREAKOUT FLOW
 def manage_breakout_event(broker, event: Event) -> None:
     """
@@ -154,13 +163,16 @@ def manage_breakout_event(broker, event: Event) -> None:
         f"({'regular' if regular else 'extended'} hours) on breakout")
 
     # --- manage exit: take-profit / stop-loss / hard time exit --------------
+    tp_pct, sl_pct = rr_for(event)
+    rr = tp_pct / sl_pct if sl_pct else 0
     if side == "buy":
-        tp = entry_px * (1 + config.TAKE_PROFIT_PCT)
-        sl = entry_px * (1 - config.STOP_LOSS_PCT)
+        tp = entry_px * (1 + tp_pct)
+        sl = entry_px * (1 - sl_pct)
     else:
-        tp = entry_px * (1 - config.TAKE_PROFIT_PCT)
-        sl = entry_px * (1 + config.STOP_LOSS_PCT)
-    log(f"Exit targets -> TP={tp:.2f} SL={sl:.2f} time={flat_deadline.astimezone(MARKET_TZ):%H:%M %Z}")
+        tp = entry_px * (1 - tp_pct)
+        sl = entry_px * (1 + sl_pct)
+    log(f"Exit targets -> TP={tp:.2f} (+{tp_pct*100:.1f}%) SL={sl:.2f} (-{sl_pct*100:.1f}%) "
+        f"RR={rr:.1f}:1 time={flat_deadline.astimezone(MARKET_TZ):%H:%M %Z}")
 
     reason = "time"
     while now_utc() < flat_deadline:
