@@ -1,42 +1,61 @@
 name: news-bot
 
-# Runs the GLD news-straddle bot on GitHub's servers (no laptop needed).
-# The bot itself waits for the exact entry time internally, so we just need
-# each run to START comfortably before the event — that absorbs any delay in
-# GitHub's scheduler.
+# The bot waits for the exact entry time internally, so each run just needs to
+# START before the event. GitHub's scheduler can be delayed 30-60 min, so we
+# fire SEVERAL runs before each event window as redundancy. A guard in the bot
+# (already_active_or_recent) stops the extra runs from double-trading.
 #
 # Times are UTC. During US Eastern SUMMER time (EDT = UTC-4):
-#   11:30 UTC = 07:30 ET  -> covers the 08:30 ET releases (NFP, CPI, Claims)
-#   13:15 UTC = 09:15 ET  -> covers the 10:00 ET releases (ISM PMI)
-#   17:30 UTC = 13:30 ET  -> covers the 14:00 ET FOMC decision
-# (In US winter/EST these shift one hour earlier in ET; adjust if needed.)
+#   8:30 ET releases (NFP, CPI, Claims): 07:00 / 07:30 / 08:00 ET
+#   10:00 ET releases (ISM PMI):         09:00 / 09:30 ET
+#   14:00 ET FOMC:                       12:30 / 13:00 / 13:30 ET
+# (In US winter/EST these land one hour earlier in ET; adjust if needed.)
 
 on:
   schedule:
-    - cron: "30 11 * * 1-5"
-    - cron: "15 13 * * 1-5"
-    - cron: "30 17 * * 1-5"
-  workflow_dispatch: {}        # lets you press "Run workflow" to test manually
+    - cron: "0 11 * * 1-5"     # 07:00 ET  \
+    - cron: "30 11 * * 1-5"    # 07:30 ET   > covers 08:30 ET releases
+    - cron: "0 12 * * 1-5"     # 08:00 ET  /
+    - cron: "0 13 * * 1-5"     # 09:00 ET  \  covers 10:00 ET releases
+    - cron: "30 13 * * 1-5"    # 09:30 ET  /
+    - cron: "30 16 * * 1-5"    # 12:30 ET  \
+    - cron: "0 17 * * 1-5"     # 13:00 ET   > covers 14:00 ET FOMC
+    - cron: "30 17 * * 1-5"    # 13:30 ET  /
+  workflow_dispatch: {}
+
+permissions:
+  contents: write              # lets the run commit trades.csv back to the repo
 
 jobs:
   trade:
     runs-on: ubuntu-latest
-    timeout-minutes: 120       # idles ~1h before the event, then holds up to 30 min
+    timeout-minutes: 180       # an early run may idle ~1.5h before the event
     env:
       ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
       ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
       ALPACA_PAPER: "True"
     steps:
-      - name: Get the code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt
 
       - name: Run the bot for today's events
         run: python bot.py --today
+
+      - name: Save trade to running tally (trades.csv)
+        if: always()
+        run: |
+          if [ -n "$(git status --porcelain trades.csv 2>/dev/null)" ]; then
+            git config user.name  "news-bot"
+            git config user.email "news-bot@users.noreply.github.com"
+            git add trades.csv
+            git commit -m "log trade $(date -u +%FT%TZ)"
+            git pull --rebase --autostash || true
+            git push || true
+          else
+            echo "No new trade to log."
+          fi
