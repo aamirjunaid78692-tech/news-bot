@@ -109,6 +109,24 @@ def rr_for(event: Event):
     return config.TAKE_PROFIT_PCT, config.STOP_LOSS_PCT
 
 
+def _record_trade(event, side, qty, entry_px, exit_px, pnl, pct, reason):
+    """Append one row to trades.csv (the running tally, committed by the workflow)."""
+    import csv, os
+    path = "trades.csv"
+    is_new = not os.path.exists(path)
+    ts = now_utc().astimezone(MARKET_TZ).strftime("%Y-%m-%d %H:%M %Z")
+    try:
+        with open(path, "a", newline="") as f:
+            w = csv.writer(f)
+            if is_new:
+                w.writerow(["time", "event", "side", "qty", "entry", "exit",
+                            "pnl_usd", "pnl_pct", "exit_reason"])
+            w.writerow([ts, event.title, side, qty, f"{entry_px:.2f}",
+                        f"{exit_px:.2f}", f"{pnl:.2f}", f"{pct:.2f}", reason])
+    except Exception as e:
+        log(f"(could not write trades.csv: {e})")
+
+
 # ------------------------------------------------------------- BREAKOUT FLOW
 def manage_breakout_event(broker, event: Event) -> None:
     """
@@ -153,6 +171,12 @@ def manage_breakout_event(broker, event: Event) -> None:
             f"for '{event.title}'. No trade.")
         return
 
+    # --- guard against double-trading from the redundant scheduled runs ------
+    if broker.already_active_or_recent(sym):
+        log(f"Skip '{event.title}': a position or recent fill already exists "
+            f"(another scheduled run handled this event).")
+        return
+
     # --- enter the breakout direction ---------------------------------------
     qty = broker.qty_for_notional(sym, config.NOTIONAL_PER_TRADE)
     regular = is_regular_hours(now_utc())
@@ -186,8 +210,18 @@ def manage_breakout_event(broker, event: Event) -> None:
         time.sleep(config.BREAKOUT_POLL_SECONDS)
 
     broker.cancel_open_orders(sym)
-    broker.flatten(sym)
+    exit_px = broker.flatten(sym)          # exact exit fill price from Alpaca
+    if exit_px is None:
+        exit_px = broker.last_price(sym)
+    if side == "buy":
+        pnl = (exit_px - entry_px) * qty
+    else:
+        pnl = (entry_px - exit_px) * qty
+    pct = (pnl / (entry_px * qty) * 100) if (entry_px and qty) else 0.0
     log(f"FLATTENED {sym} after '{event.title}' (exit: {reason})")
+    log(f"TRADE RESULT: {side.upper()} {qty} {sym} | entry {entry_px:.2f} exit {exit_px:.2f} "
+        f"| P&L {pnl:+.2f} USD ({pct:+.2f}%) | exit={reason}")
+    _record_trade(event, side, qty, entry_px, exit_px, pnl, pct, reason)
 
 
 # ---------------------------------------------- LEGACY DIRECTIONAL FLOW

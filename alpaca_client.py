@@ -10,6 +10,8 @@ Handles:
 from __future__ import annotations
 
 import math
+import time
+import datetime as dt
 from typing import Optional
 
 from alpaca.trading.client import TradingClient
@@ -150,13 +152,42 @@ class Broker:
         except Exception:
             return 0
 
-    def flatten(self, symbol: str) -> Optional[str]:
-        """Close any open position in symbol at market (regular hours)."""
+    def already_active_or_recent(self, symbol: str, minutes: int = 45) -> bool:
+        """
+        True if a position is currently open OR a fill occurred in the last
+        `minutes`. Used as a guard so that the several redundant scheduled runs
+        can't double-trade the same event.
+        """
+        if self.position_qty(symbol) != 0:
+            return True
+        try:
+            req = GetOrdersRequest(
+                status=QueryOrderStatus.CLOSED, symbols=[symbol],
+                after=dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=minutes),
+            )
+            for o in self.trading.get_orders(req):
+                if getattr(o, "filled_at", None) and o.filled_qty and float(o.filled_qty) > 0:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def flatten(self, symbol: str):
+        """Close any open position at market and return the exact exit fill
+        price (float), or None if nothing to close / fill unknown."""
         qty = self.position_qty(symbol)
         if qty == 0:
             return None
         order = self.trading.close_position(symbol)
-        return str(order.id)
+        for _ in range(12):                      # poll up to ~12s for the fill
+            try:
+                o = self.trading.get_order_by_id(order.id)
+                if getattr(o, "filled_avg_price", None):
+                    return float(o.filled_avg_price)
+            except Exception:
+                pass
+            time.sleep(1)
+        return None
 
     def cancel_open_orders(self, symbol: str) -> None:
         req = GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[symbol])
