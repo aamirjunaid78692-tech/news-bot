@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>News-Bot — Trade Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #f6f7f9; color: #1c2230;
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 28px 20px 60px; }
+  h1 { font-size: 22px; margin: 0 0 2px; }
+  .sub { color: #6b7280; font-size: 13px; margin-bottom: 22px; }
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 26px; }
+  .card { background: #fff; border: 1px solid #e6e8ec; border-radius: 12px; padding: 16px; }
+  .card .label { font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: .04em; }
+  .card .value { font-size: 26px; font-weight: 700; margin-top: 6px; }
+  .pos { color: #128a3e; } .neg { color: #c0392b; } .muted { color: #6b7280; }
+  h2 { font-size: 15px; margin: 26px 0 12px; }
+  .panel { background: #fff; border: 1px solid #e6e8ec; border-radius: 12px; padding: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid #eef0f3; white-space: nowrap; }
+  th { color: #6b7280; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+  td.num, th.num { text-align: right; }
+  .empty { text-align: center; color: #6b7280; padding: 40px 0; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .buy { background: #e7f5ec; color: #128a3e; } .sell { background: #fdecea; color: #c0392b; }
+  .foot { color: #9aa1ac; font-size: 12px; margin-top: 22px; text-align: center; }
+  canvas { max-height: 260px; }
+  .reload { float: right; font-size: 12px; color: #2563eb; cursor: pointer; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="reload" onclick="load()">&#x21bb; Refresh</a>
+  <h1>News-Bot — Trade Dashboard</h1>
+  <div class="sub">GLD news-breakout strategy · paper account · reads <code>trades.csv</code></div>
+
+  <div class="cards" id="cards"></div>
+
+  <h2>Profit / loss by event</h2>
+  <div class="panel"><canvas id="byEvent"></canvas></div>
+
+  <h2>Per-event breakdown</h2>
+  <div class="panel" id="eventTable"></div>
+
+  <h2>All trades</h2>
+  <div class="panel" id="tradeTable"></div>
+
+  <div class="foot" id="foot"></div>
+</div>
+
+<script>
+let chart;
+const $ = id => document.getElementById(id);
+const money = n => (n >= 0 ? "+$" : "-$") + Math.abs(n).toFixed(2);
+const cls = n => n > 0 ? "pos" : (n < 0 ? "neg" : "muted");
+
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/).filter(l => l.length);
+  if (lines.length < 2) return [];
+  const head = lines[0].split(",");
+  return lines.slice(1).map(line => {
+    // simple CSV split (our fields have no embedded commas except event titles are quoted-free here)
+    const parts = line.split(",");
+    const row = {};
+    head.forEach((h, i) => row[h] = parts[i]);
+    row.pnl_usd = parseFloat(row.pnl_usd);
+    row.pnl_pct = parseFloat(row.pnl_pct);
+    row.qty = parseInt(row.qty);
+    return row;
+  });
+}
+
+function render(rows) {
+  if (!rows.length) {
+    $("cards").innerHTML = "";
+    $("eventTable").innerHTML = '<div class="empty">No trades logged yet.<br>The dashboard fills in automatically after the bot’s first trade.</div>';
+    $("tradeTable").innerHTML = "";
+    if (chart) chart.destroy();
+    $("foot").textContent = "Waiting for the first trade…";
+    return;
+  }
+  const n = rows.length;
+  const wins = rows.filter(r => r.pnl_usd > 0).length;
+  const total = rows.reduce((s, r) => s + r.pnl_usd, 0);
+  const winRate = (wins / n * 100);
+  const avg = total / n;
+  const grossWin = rows.filter(r => r.pnl_usd > 0).reduce((s, r) => s + r.pnl_usd, 0);
+  const grossLoss = rows.filter(r => r.pnl_usd < 0).reduce((s, r) => s + r.pnl_usd, 0);
+
+  $("cards").innerHTML = [
+    ["Total trades", n, ""],
+    ["Win rate", winRate.toFixed(0) + "%", ""],
+    ["Total P&L", money(total), cls(total)],
+    ["Avg / trade", money(avg), cls(avg)],
+  ].map(([l, v, c]) => `<div class="card"><div class="label">${l}</div><div class="value ${c}">${v}</div></div>`).join("");
+
+  // group by event (normalise title)
+  const groups = {};
+  rows.forEach(r => {
+    const k = r.event || "Unknown";
+    (groups[k] = groups[k] || []).push(r);
+  });
+  const evStats = Object.entries(groups).map(([ev, rs]) => {
+    const t = rs.reduce((s, r) => s + r.pnl_usd, 0);
+    const w = rs.filter(r => r.pnl_usd > 0).length;
+    return { ev, count: rs.length, wins: w, wr: w / rs.length * 100, pnl: t };
+  }).sort((a, b) => b.pnl - a.pnl);
+
+  $("eventTable").innerHTML = `<table><thead><tr>
+      <th>Event</th><th class="num">Trades</th><th class="num">Win rate</th><th class="num">Total P&L</th>
+    </tr></thead><tbody>${evStats.map(e => `<tr>
+      <td>${e.ev}</td><td class="num">${e.count}</td>
+      <td class="num">${e.wr.toFixed(0)}%</td>
+      <td class="num ${cls(e.pnl)}">${money(e.pnl)}</td></tr>`).join("")}</tbody></table>`;
+
+  $("tradeTable").innerHTML = `<table><thead><tr>
+      <th>Time</th><th>Event</th><th>Side</th><th class="num">Qty</th>
+      <th class="num">Entry</th><th class="num">Exit</th><th class="num">P&L</th><th>Exit</th>
+    </tr></thead><tbody>${rows.slice().reverse().map(r => `<tr>
+      <td>${r.time}</td><td>${r.event}</td>
+      <td><span class="pill ${r.side}">${(r.side||"").toUpperCase()}</span></td>
+      <td class="num">${r.qty}</td><td class="num">${r.entry}</td><td class="num">${r.exit}</td>
+      <td class="num ${cls(r.pnl_usd)}">${money(r.pnl_usd)}</td>
+      <td class="muted">${r.exit_reason||""}</td></tr>`).join("")}</tbody></table>`;
+
+  if (chart) chart.destroy();
+  chart = new Chart($("byEvent"), {
+    type: "bar",
+    data: { labels: evStats.map(e => e.ev),
+      datasets: [{ data: evStats.map(e => e.pnl),
+        backgroundColor: evStats.map(e => e.pnl >= 0 ? "#128a3e" : "#c0392b") }] },
+    options: { responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { ticks: { callback: v => "$" + v } } } }
+  });
+
+  $("foot").textContent = `Gross wins ${money(grossWin)} · gross losses ${money(grossLoss)} · updated ${new Date().toLocaleString()}`;
+}
+
+async function load() {
+  try {
+    const res = await fetch("trades.csv?t=" + Date.now());
+    if (!res.ok) { render([]); return; }
+    render(parseCSV(await res.text()));
+  } catch (e) { render([]); }
+}
+load();
+setInterval(load, 60000); // auto-refresh each minute
+</script>
+</body>
+</html>
