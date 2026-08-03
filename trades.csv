@@ -1,0 +1,2 @@
+time,event,side,qty,entry,exit,pnl_usd,pnl_pct,exit_reason
+2026-08-03 10:00 EDT,ISM Manufacturing PMI,buy,2,369.78,369.84,0.13,0.02,stop-loss
