@@ -109,6 +109,21 @@ def rr_for(event: Event):
     return config.TAKE_PROFIT_PCT, config.STOP_LOSS_PCT
 
 
+def _position_qty(broker, sym, sl_pct):
+    """
+    Whole-share quantity for this trade. In "risk" mode, size so a stop-out
+    (sl_pct move) loses about RISK_PER_TRADE dollars; else fixed notional.
+    """
+    import math
+    if getattr(config, "SIZING_MODE", "notional") == "risk":
+        px = broker.last_price(sym)
+        risk_per_share = px * sl_pct
+        if risk_per_share <= 0:
+            return 1
+        return max(1, math.floor(config.RISK_PER_TRADE / risk_per_share))
+    return broker.qty_for_notional(sym, config.NOTIONAL_PER_TRADE)
+
+
 def _record_trade(event, side, qty, entry_px, exit_px, pnl, pct, reason):
     """Append one row to trades.csv (the running tally, committed by the workflow)."""
     import csv, os
@@ -177,17 +192,19 @@ def manage_breakout_event(broker, event: Event) -> None:
             f"(another scheduled run handled this event).")
         return
 
-    # --- enter the breakout direction ---------------------------------------
-    qty = broker.qty_for_notional(sym, config.NOTIONAL_PER_TRADE)
+    # --- size the position (risk-based) and enter the breakout direction -----
+    tp_pct, sl_pct = rr_for(event)
+    qty = _position_qty(broker, sym, sl_pct)
     regular = is_regular_hours(now_utc())
     broker.simple_entry(sym, side, qty, regular)
     time.sleep(2)
     entry_px = broker.avg_entry_price(sym) or broker.last_price(sym)
+    est_risk = qty * entry_px * sl_pct
     log(f"ENTERED {side.upper()} {qty} {sym} @ ~{entry_px:.2f} "
-        f"({'regular' if regular else 'extended'} hours) on breakout")
+        f"({'regular' if regular else 'extended'} hours) on breakout "
+        f"[~${qty*entry_px:,.0f} notional | risk ~${est_risk:,.0f}]")
 
     # --- manage exit: take-profit / stop-loss / hard time exit --------------
-    tp_pct, sl_pct = rr_for(event)
     rr = tp_pct / sl_pct if sl_pct else 0
     if side == "buy":
         tp = entry_px * (1 + tp_pct)

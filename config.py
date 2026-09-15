@@ -85,7 +85,15 @@ BREAKOUT_POLL_SECONDS = 5       # how often to check the price while watching
 # ----------------------------------------------------------------------------
 # Sizing & risk
 # ----------------------------------------------------------------------------
-NOTIONAL_PER_TRADE = 1000.0     # USD notional per event (1% of a 100k paper acct)
+NOTIONAL_PER_TRADE = 1000.0     # USD notional per event (only used if SIZING_MODE="notional")
+
+# Sizing mode:
+#   "risk"     -> size the position so a stop-out loses about RISK_PER_TRADE.
+#                 With a 0.5% stop that means ~$200k position for $1,000 risk
+#                 (uses ~2x margin on a $100k account; pre-market fills will slip).
+#   "notional" -> fixed NOTIONAL_PER_TRADE dollars per trade.
+SIZING_MODE = "risk"
+RISK_PER_TRADE = 1000.0         # target dollar loss if stopped out (risk-based sizing)
 
 # Per-event risk-reward tiers, matched by keyword in the event title. Stop-loss
 # stays tight (0.5%); the take-profit widens for the biggest movers so you ride
